@@ -1,49 +1,36 @@
-# INFOCHARGE Hourly Market News Bot
+# INFOCHARGE — Free AI Market News Bot
 
-Posts an Indian stock-market news bulletin to Telegram every hour.
+This version uses **GitHub Actions** instead of a paid always-on Render worker.
 
-## What it does
-- Reads market-news RSS feeds.
-- Filters for Indian/global market keywords.
-- Removes duplicate headlines.
-- Optionally uses the OpenAI Responses API to create a concise bulletin.
-- Posts to a Telegram channel/group every hour.
-- Uses Asia/Kolkata timezone.
-- Includes an education/not-investment-advice footer.
+## What it posts
 
-## 1. Create the Telegram bot
-Open Telegram and talk to @BotFather.
-Use /newbot, choose a name and username, then copy the bot token.
+### Trading days (IST)
+- 07:30 — Good Morning
+- 08:45 — Pre-market
+- 09:20 — Market Open
+- 10:00–15:00 — Hourly updates
+- 15:45 — Market Close
+- 18:30 — Evening Recap
+- 21:30 — Global Market Update
 
-## 2. Add the bot to your Telegram destination
-For a channel: add the bot as an administrator with permission to post messages.
-For a group: add the bot and allow it to send messages.
+### Saturday / Sunday / NSE holiday
+- Every 6 hours: 00:00, 06:00, 12:00, 18:00 IST
+- These are non-trading-day briefings, not fake trading-session updates.
 
-Set TELEGRAM_CHAT_ID to @yourchannelusername when possible.
+## GitHub Secrets
 
-## 3. Configure
-Copy .env.example to .env and fill in:
-TELEGRAM_BOT_TOKEN
-TELEGRAM_CHAT_ID
-OPENAI_API_KEY (optional)
+Add these repository secrets:
+- TELEGRAM_BOT_TOKEN
+- TELEGRAM_CHAT_ID
+- OPENAI_API_KEY
+- OPENAI_MODEL
 
-## 4. Run locally
-Python 3.11+ is recommended.
+Use an OpenAI API model that is actually available in your API account for `OPENAI_MODEL`.
 
-    python -m venv .venv
-    source .venv/bin/activate
-    pip install -r requirements.txt
-    cp .env.example .env
-    python bot.py
+## Important
 
-The bot sends one test update immediately, then every hour.
+GitHub Actions scheduling can occasionally be delayed by GitHub. It is not guaranteed to fire to the exact second.
 
-## 5. Deploy 24/7
-Use any always-on Python host that supports a background worker. Keep the process:
-    python bot.py
+The 2026 NSE holiday list is embedded in `bot.py`. Update it for future years.
 
-Do not commit .env or expose bot/API keys.
-
-## Notes
-RSS availability can change. Replace/add feeds in RSS_FEEDS inside bot.py if a source stops responding.
-The bot intentionally does not generate buy/sell calls.
+No buy/sell calls are generated. The AI is instructed to summarize supplied news only and not invent facts.

@@ -1,113 +1,167 @@
-import os, re, hashlib, logging
-from datetime import datetime, timezone, timedelta
+import os
+import logging
+import hashlib
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import feedparser
 import requests
-from dotenv import load_dotenv
-from apscheduler.schedulers.blocking import BlockingScheduler
+from openai import OpenAI
 
-load_dotenv()
-BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-mini")
-MAX_ARTICLES = int(os.getenv("MAX_ARTICLES", "8"))
-IST = timezone(timedelta(hours=5, minutes=30))
+IST = ZoneInfo("Asia/Kolkata")
+
+TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-mini")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 RSS_FEEDS = [
-    "https://www.moneycontrol.com/rss/marketreports.xml",
     "https://www.moneycontrol.com/rss/latestnews.xml",
     "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
     "https://www.business-standard.com/rss/markets-106.rss",
 ]
 
-KEYWORDS = (
-    "nifty", "sensex", "bank nifty", "nse", "bse", "rbi", "sebi", "fii", "dii",
-    "ipo", "earnings", "results", "quarter", "reliance", "tcs", "infosys",
-    "hdfc", "icici", "sbi", "adani", "tata", "inflation", "rupee", "crude",
-    "fed", "nasdaq", "dow", "gift nifty", "futures", "options", "stock",
-    "shares", "market", "sector", "merger", "acquisition", "block deal"
+NSE_HOLIDAYS_2026 = {
+    "2026-01-15", "2026-01-26", "2026-03-03", "2026-03-26",
+    "2026-03-31", "2026-04-03", "2026-04-14", "2026-05-01",
+    "2026-05-28", "2026-06-26", "2026-09-14", "2026-10-02",
+    "2026-10-20", "2026-11-10", "2026-11-24", "2026-12-25",
+}
+SPECIAL_MUHURAT_2026 = {"2026-11-08"}
+
+MARKET_WORDS = (
+    "nifty", "sensex", "bank nifty", "stock", "shares", "market",
+    "equity", "ipo", "fii", "dii", "rbi", "sebi", "earnings",
+    "results", "crude", "rupee", "inflation", "fed", "nasdaq",
+    "dow", "s&p", "oil", "gold", "bond", "tariff", "economy"
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+def is_nse_holiday(dt=None):
+    dt = dt or datetime.now(IST)
+    d = dt.strftime("%Y-%m-%d")
+    if dt.weekday() >= 5:
+        return d not in SPECIAL_MUHURAT_2026
+    return d in NSE_HOLIDAYS_2026
 
-def clean_html(s):
-    return re.sub(r"<[^>]+>", "", s or "").strip()
+def fetch_news(limit=18):
+    articles = []
+    seen = set()
 
-def fetch_news():
-    items, seen = [], set()
     for url in RSS_FEEDS:
         try:
             feed = feedparser.parse(url)
-            for e in feed.entries[:25]:
-                title = clean_html(e.get("title", ""))
-                link = e.get("link", "")
-                summary = clean_html(e.get("summary", ""))
-                key = (title.lower(), link)
-                if not title or key in seen:
-                    continue
+            for e in feed.entries:
+                title = getattr(e, "title", "").strip()
+                link = getattr(e, "link", "").strip()
+                summary = getattr(e, "summary", "").strip()
                 text = f"{title} {summary}".lower()
-                if any(k in text for k in KEYWORDS):
-                    seen.add(key)
-                    items.append({"title": title, "summary": summary, "link": link})
-        except Exception as exc:
-            logging.warning("RSS failed %s: %s", url, exc)
-    return items[:MAX_ARTICLES]
 
-def fallback_post(items):
-    lines = ["🔔 <b>INFOCHARGE HOURLY MARKET UPDATE</b>",
-             f"🕐 {datetime.now(IST).strftime('%d %b %Y • %I:%M %p IST')}", ""]
-    if not items:
-        lines.append("No major market-related headlines found in the latest RSS feeds.")
-    else:
-        lines.append("<b>📰 Key Headlines</b>")
-        for i, x in enumerate(items[:6], 1):
-            lines.append(f"{i}. {x['title']}")
-            lines.append(f"🔗 {x['link']}")
-    lines += ["", "⚠️ <i>Information for education and market awareness only. Not a buy/sell recommendation.</i>",
-              "— INFOCHARGE"]
-    return "\n".join(lines)[:4096]
+                if not title or not link or link in seen:
+                    continue
+                if not any(w in text for w in MARKET_WORDS):
+                    continue
 
-def ai_post(items):
-    if not OPENAI_API_KEY:
-        return fallback_post(items)
-    from openai import OpenAI
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    source = "\n\n".join(
-        f"HEADLINE: {x['title']}\nSUMMARY: {x['summary']}\nURL: {x['link']}" for x in items
+                seen.add(link)
+                articles.append({
+                    "title": title,
+                    "summary": summary[:500],
+                    "link": link,
+                })
+                if len(articles) >= limit:
+                    return articles
+        except Exception:
+            logging.exception("RSS error: %s", url)
+
+    return articles
+
+def ai_message(kind, articles):
+    now = datetime.now(IST).strftime("%d %b %Y, %I:%M %p IST")
+    news = "\n\n".join(
+        f"{i+1}. {a['title']}\n{a['summary']}\nSource: {a['link']}"
+        for i, a in enumerate(articles)
     )
-    prompt = f"""Create a concise hourly Indian stock-market news bulletin for an INFOCHARGE Telegram community.
-Use ONLY the supplied headlines/summaries. Do not invent facts, prices, targets, or recommendations.
-Prioritize Nifty/Sensex, RBI/SEBI, major companies, IPOs, results, FII/DII and global factors affecting India.
-Format in Telegram HTML. Maximum 1800 characters.
-Start with: 🔔 <b>INFOCHARGE HOURLY MARKET UPDATE</b>
-Then time, 3-6 most important items, and a one-line "Market Impact" section.
-Every item should include its source URL on a new line.
-End exactly with:
-⚠️ <i>Information for education and market awareness only. Not a buy/sell recommendation.</i>
-— INFOCHARGE
 
-SOURCE MATERIAL:
-{source}"""
-    r = client.responses.create(model=MODEL, input=prompt)
-    text = r.output_text.strip()
-    return text[:4096]
+    if kind == "holiday":
+        focus = """Create a NON-TRADING-DAY market briefing. Clearly say Indian markets are closed.
+Cover important global markets, major corporate/macro developments, and what Indian investors
+should watch for the next trading session. Do not give buy/sell calls."""
+    elif kind == "morning":
+        focus = "Create a Good Morning briefing with global cues, key overnight developments, and what to watch today."
+    elif kind == "premarket":
+        focus = "Create a concise pre-market briefing covering important news, global cues, commodities, currency and key events."
+    elif kind == "open":
+        focus = "Create a market-open briefing focused on the most important developments around the opening session."
+    elif kind == "hourly":
+        focus = "Create an hourly market-news update. Only include meaningful new developments; avoid filler."
+    elif kind == "close":
+        focus = "Create a market-close briefing covering major developments, sectors/themes and important events for tomorrow."
+    elif kind == "evening":
+        focus = "Create an evening recap of the most important Indian and global market developments."
+    else:
+        focus = "Create a global-market update relevant to Indian investors."
 
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": False}
-    r = requests.post(url, json=payload, timeout=30)
-    r.raise_for_status()
+    prompt = f"""You are the AI news editor for INFOCHARGE, an educational market-information community.
 
-def run_once():
-    items = fetch_news()
-    message = ai_post(items)
+Current time: {now}
+
+{focus}
+
+Rules:
+- Use ONLY facts supported by the supplied headlines/articles.
+- Do not invent prices, percentages, events or statistics.
+- No buy calls, sell calls, targets, guaranteed returns or personalized financial advice.
+- Use simple professional English.
+- Make it Telegram-friendly and easy to scan.
+- Prefer 5-8 important points, not a huge article.
+- Add source links at the end.
+- Start with a suitable INFOCHARGE heading and 1-2 relevant emojis.
+- If the supplied news is weak, say that there are no major fresh developments instead of inventing content.
+
+News:
+{news}
+"""
+    r = client.responses.create(model=OPENAI_MODEL, input=prompt)
+    return r.output_text.strip()
+
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    # Telegram message limit is ~4096 chars.
+    for i in range(0, len(text), 3900):
+        part = text[i:i+3900]
+        resp = requests.post(
+            url,
+            data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": part,
+                "disable_web_page_preview": False,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+
+def run(kind):
+    now = datetime.now(IST)
+
+    if is_nse_holiday(now):
+        if kind != "holiday":
+            logging.info("Normal %s skipped: NSE holiday/weekend.", kind)
+            return
+    elif kind == "holiday":
+        logging.info("Holiday update skipped: trading day.")
+        return
+
+    articles = fetch_news()
+    if not articles:
+        logging.warning("No relevant news found.")
+        return
+
+    message = ai_message(kind, articles)
     send_telegram(message)
-    logging.info("Posted hourly update with %d headlines.", len(items))
+    logging.info("Published %s update.", kind)
 
 if __name__ == "__main__":
-    run_once()
-    scheduler = BlockingScheduler(timezone="Asia/Kolkata")
-    scheduler.add_job(run_once, "interval", hours=1, id="hourly_market_news",
-                      max_instances=1, coalesce=True)
-    logging.info("INFOCHARGE bot running: every hour, Asia/Kolkata.")
-    scheduler.start()
+    kind = os.getenv("INFOCHARGE_UPDATE_TYPE", "hourly")
+    logging.basicConfig(level=logging.INFO)
+    run(kind)
