@@ -1,0 +1,64 @@
+name: INFOCHARGE Market Updates
+
+on:
+  schedule:
+    - cron: "0 2 * * 1-5"
+    - cron: "15 3 * * 1-5"
+    - cron: "50 3 * * 1-5"
+    - cron: "30 4 * * 1-5"
+    - cron: "30 5 * * 1-5"
+    - cron: "30 6 * * 1-5"
+    - cron: "30 7 * * 1-5"
+    - cron: "30 8 * * 1-5"
+    - cron: "45 10 * * 1-5"
+    - cron: "0 13 * * 1-5"
+    - cron: "0 16 * * 1-5"
+
+    - cron: "0 0 * * *"
+    - cron: "0 6 * * *"
+    - cron: "0 12 * * *"
+    - cron: "0 18 * * *"
+
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Decide update type
+        id: type
+        shell: bash
+        run: |
+          H=$(date -u +%H)
+          M=$(date -u +%M)
+
+          case "$H:$M" in
+            02:00) echo "kind=morning" >> "$GITHUB_OUTPUT" ;;
+            03:15) echo "kind=premarket" >> "$GITHUB_OUTPUT" ;;
+            03:50) echo "kind=open" >> "$GITHUB_OUTPUT" ;;
+            10:45) echo "kind=close" >> "$GITHUB_OUTPUT" ;;
+            13:00) echo "kind=evening" >> "$GITHUB_OUTPUT" ;;
+            16:00) echo "kind=global" >> "$GITHUB_OUTPUT" ;;
+            *) echo "kind=hourly" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Publish INFOCHARGE update
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          INFOCHARGE_UPDATE_TYPE: ${{ steps.type.outputs.kind }}
+        run: python bot.py
