@@ -1,36 +1,33 @@
-# INFOCHARGE — Free AI Market News Bot
+# INFOCHARGE Gemini Market Updates
 
-This version uses **GitHub Actions** instead of a paid always-on Render worker.
+Telegram market-news bot for INFOCHARGE.
 
-## What it posts
+## Secrets required
 
-### Trading days (IST)
-- 07:30 — Good Morning
-- 08:45 — Pre-market
-- 09:20 — Market Open
-- 10:00–15:00 — Hourly updates
-- 15:45 — Market Close
-- 18:30 — Evening Recap
-- 21:30 — Global Market Update
+Add these GitHub Actions secrets:
 
-### Saturday / Sunday / NSE holiday
-- Every 6 hours: 00:00, 06:00, 12:00, 18:00 IST
-- These are non-trading-day briefings, not fake trading-session updates.
-
-## GitHub Secrets
-
-Add these repository secrets:
 - TELEGRAM_BOT_TOKEN
 - TELEGRAM_CHAT_ID
-- OPENAI_API_KEY
-- OPENAI_MODEL
+- GEMINI_API_KEY
 
-Use an OpenAI API model that is actually available in your API account for `OPENAI_MODEL`.
+No OpenAI secret is required.
 
-## Important
+## Schedule
 
-GitHub Actions scheduling can occasionally be delayed by GitHub. It is not guaranteed to fire to the exact second.
+Trading days:
+- 07:30 IST morning
+- 08:45 IST pre-market
+- 09:20 IST market open
+- 10:00–15:00 IST hourly
+- 15:45 IST close
+- 18:30 IST evening recap
+- 21:30 IST global update
 
-The 2026 NSE holiday list is embedded in `bot.py`. Update it for future years.
+Weekends/NSE holidays:
+- 00:00, 06:00, 12:00, 18:00 IST general market/news briefing
 
-No buy/sell calls are generated. The AI is instructed to summarize supplied news only and not invent facts.
+GitHub Actions scheduled jobs can occasionally start late. The bot determines the update type from the scheduled event itself, so a delayed job does not get misclassified.
+
+## Manual test
+
+Actions → INFOCHARGE Gemini Market Updates → Run workflow → choose `hourly`.
