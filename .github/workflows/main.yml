@@ -19,25 +19,22 @@ on:
           - holiday
 
   schedule:
-    - cron: "30 18 * * *"
-    - cron: "30 0 * * *"
-    - cron: "30 6 * * *"
-    - cron: "30 12 * * *"
-
+    - cron: "0 0 * * *"
     - cron: "0 2 * * 1-5"
     - cron: "15 3 * * 1-5"
     - cron: "50 3 * * 1-5"
-
     - cron: "30 4 * * 1-5"
     - cron: "30 5 * * 1-5"
     - cron: "30 6 * * 1-5"
     - cron: "30 7 * * 1-5"
     - cron: "30 8 * * 1-5"
     - cron: "30 9 * * 1-5"
-
     - cron: "15 10 * * 1-5"
+    - cron: "0 6 * * *"
+    - cron: "0 12 * * *"
     - cron: "0 13 * * 1-5"
     - cron: "0 16 * * 1-5"
+    - cron: "0 18 * * *"
 
 jobs:
   market-update:
@@ -53,45 +50,41 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements_gemini.txt
 
       - name: Decide update type
         id: type
-        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "kind=${{ inputs.update_type }}" >> "$GITHUB_OUTPUT"
-            exit 0
+          else
+            case "${{ github.event.schedule }}" in
+              "0 0 * * *"|"0 6 * * *"|"0 12 * * *"|"0 18 * * *")
+                echo "kind=holiday" >> "$GITHUB_OUTPUT"
+                ;;
+              "0 2 * * 1-5")
+                echo "kind=morning" >> "$GITHUB_OUTPUT"
+                ;;
+              "15 3 * * 1-5")
+                echo "kind=premarket" >> "$GITHUB_OUTPUT"
+                ;;
+              "50 3 * * 1-5")
+                echo "kind=open" >> "$GITHUB_OUTPUT"
+                ;;
+              "15 10 * * 1-5")
+                echo "kind=close" >> "$GITHUB_OUTPUT"
+                ;;
+              "0 13 * * 1-5")
+                echo "kind=evening" >> "$GITHUB_OUTPUT"
+                ;;
+              "0 16 * * 1-5")
+                echo "kind=global" >> "$GITHUB_OUTPUT"
+                ;;
+              *)
+                echo "kind=hourly" >> "$GITHUB_OUTPUT"
+                ;;
+            esac
           fi
-
-          CRON="${{ github.event.schedule }}"
-
-          case "$CRON" in
-            "30 18 * * *"|"30 0 * * *"|"30 6 * * *"|"30 12 * * *")
-              echo "kind=holiday" >> "$GITHUB_OUTPUT"
-              ;;
-            "0 2 * * 1-5")
-              echo "kind=morning" >> "$GITHUB_OUTPUT"
-              ;;
-            "15 3 * * 1-5")
-              echo "kind=premarket" >> "$GITHUB_OUTPUT"
-              ;;
-            "50 3 * * 1-5")
-              echo "kind=open" >> "$GITHUB_OUTPUT"
-              ;;
-            "15 10 * * 1-5")
-              echo "kind=close" >> "$GITHUB_OUTPUT"
-              ;;
-            "0 13 * * 1-5")
-              echo "kind=evening" >> "$GITHUB_OUTPUT"
-              ;;
-            "0 16 * * 1-5")
-              echo "kind=global" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "kind=hourly" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
 
       - name: Run INFOCHARGE Gemini Bot
         env:
