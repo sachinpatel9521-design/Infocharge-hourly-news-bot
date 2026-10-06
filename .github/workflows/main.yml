@@ -1,5 +1,6 @@
 name: INFOCHARGE AI Market Intelligence
-
+permissions:
+  contents: write
 on:
   workflow_dispatch:
     inputs:
