@@ -3,11 +3,11 @@ import json
 import logging
 import re
 import html
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import feedparser
 import requests
 from google import genai
 from google.genai import types
@@ -40,10 +40,10 @@ NEWS_FEEDS = [
 ]
 
 NSE_HOLIDAYS_2026 = {
-    "2026-01-26", "2026-03-03", "2026-03-26", "2026-03-31",
-    "2026-04-03", "2026-04-14", "2026-05-01", "2026-05-28",
-    "2026-06-26", "2026-09-14", "2026-10-02", "2026-10-20",
-    "2026-11-08", "2026-11-10", "2026-11-24", "2026-12-25",
+    "2026-01-15", "2026-01-26", "2026-03-03", "2026-03-26",
+    "2026-03-31", "2026-04-03", "2026-04-14", "2026-05-01",
+    "2026-05-28", "2026-06-26", "2026-09-14", "2026-10-02",
+    "2026-10-20", "2026-11-10", "2026-11-24", "2026-12-25",
 }
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
@@ -117,17 +117,31 @@ def fetch_news():
 
     for feed_url in NEWS_FEEDS:
         try:
-            feed = feedparser.parse(feed_url)
-            for entry in feed.entries[:12]:
-                title = clean_text(entry.get("title", ""))
-                summary = clean_text(entry.get("summary") or entry.get("description") or "")
-                link = entry.get("link", "")
-                published = clean_text(entry.get("published") or entry.get("updated") or "")
+            response = requests.get(
+                feed_url,
+                timeout=HTTP_TIMEOUT,
+                headers={"User-Agent": "INFOCHARGE-News-Bot/1.0"},
+            )
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+
+            for item in root.findall(".//item")[:12]:
+                def get_child(tag):
+                    node = item.find(tag)
+                    return node.text if node is not None and node.text else ""
+
+                title = clean_text(get_child("title"))
+                summary = clean_text(get_child("description"))
+                link = clean_text(get_child("link"))
+                published = clean_text(get_child("pubDate"))
+
                 if not title:
                     continue
+
                 key = normalize_title(title)
                 if not key or key in seen:
                     continue
+
                 seen.add(key)
                 collected.append({
                     "title": title,
@@ -135,6 +149,7 @@ def fetch_news():
                     "published": published,
                     "link": link,
                 })
+
         except Exception as exc:
             logging.warning("News feed failed: %s", exc)
 
@@ -331,26 +346,6 @@ def main():
         research.get("headline", ""),
     )
 
-    # Deterministic duplicate protection: never post a story already
-    # recorded in editorial memory, even if the model selects it again.
-    candidate_key = normalize_title(
-        research.get("memory_key")
-        or research.get("headline")
-        or ""
-    )
-    posted_keys = {
-        normalize_title(
-            item.get("key")
-            or item.get("headline")
-            or ""
-        )
-        for item in memory.get("posted", [])
-    }
-
-    if candidate_key and candidate_key in posted_keys:
-        logging.info("Story already exists in memory. Nothing sent.")
-        return
-
     if decision != "POST" or importance < 7:
         logging.info("No sufficiently important story. Nothing sent.")
         return
@@ -360,7 +355,6 @@ def main():
         raise RuntimeError("Final post was empty.")
 
     send_telegram(post)
-
     record_memory(memory, research, post)
     save_memory(memory)
 
@@ -369,3 +363,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+        
