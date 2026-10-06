@@ -16,33 +16,31 @@ on:
           - evening
 
   schedule:
-    # 08:30 IST - Pre-market
+    # 08:30 IST
     - cron: "0 3 * * 1-5"
 
-    # 09:10 IST - Before market open
+    # 09:10 IST
     - cron: "40 3 * * 1-5"
 
-    # 10:30 IST - Intelligent check
+    # 10:30 IST
     - cron: "0 5 * * 1-5"
 
-    # 12:30 IST - Intelligent check
+    # 12:30 IST
     - cron: "0 7 * * 1-5"
 
-    # 14:30 IST - Intelligent check
+    # 14:30 IST
     - cron: "0 9 * * 1-5"
 
-    # 15:40 IST - Closing intelligence
+    # 15:40 IST
     - cron: "10 10 * * 1-5"
 
-    # 18:30 IST - Evening important-news check
+    # 18:30 IST
     - cron: "0 13 * * 1-5"
+
 
 jobs:
   market-update:
-    runs-on: ubuntu-24.04
-
-    permissions:
-      contents: write
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -54,7 +52,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: python -m pip install -r requirements_gemini.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_gemini.txt
 
       - name: Decide update type
         id: update_type
@@ -80,14 +80,3 @@ jobs:
               "0 13 * * 1-5")
                 echo "kind=evening" >> "$GITHUB_OUTPUT"
                 ;;
-              *)
-                echo "kind=hourly" >> "$GITHUB_OUTPUT"
-                ;;
-            esac
-          fi
-
-      - name: Run INFOCHARGE AI Bot
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEM
