@@ -1,6 +1,5 @@
 name: INFOCHARGE AI Market Intelligence
 
-
 on:
   workflow_dispatch:
     inputs:
@@ -21,13 +20,10 @@ on:
           - ipo
 
   schedule:
-    - cron: "0 3 * * 1-5"
-    - cron: "40 3 * * 1-5"
-    - cron: "0 5 * * 1-5"
-    - cron: "0 7 * * 1-5"
-    - cron: "0 9 * * 1-5"
-    - cron: "10 10 * * 1-5"
-    - cron: "0 13 * * 1-5"
+    # Every 30 minutes during Indian market/news hours
+    # UTC times = IST - 5:30
+    - cron: "0,30 3-12 * * 1-5"
+    - cron: "0,30 13 * * 1-5"
 
 jobs:
   market-update:
@@ -37,7 +33,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -60,7 +55,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          INFOCHARGE_UPDATE_TYPE: "${{ github.event_name == 'workflow_dispatch' && inputs.update_type || github.event.schedule == '0 3 * * 1-5' && 'premarket' || github.event.schedule == '40 3 * * 1-5' && 'open' || github.event.schedule == '10 10 * * 1-5' && 'close' || github.event.schedule == '0 13 * * 1-5' && 'evening' || 'hourly' }}"
+
+          INFOCHARGE_UPDATE_TYPE: "${{ github.event_name == 'workflow_dispatch' && inputs.update_type || 'hourly' }}"
+
         run: |
           python bot_gemini.py
 
