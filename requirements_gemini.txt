@@ -1,3 +1,5 @@
-google-genai
 requests
+google-genai
 Pillow
+matplotlib
+python-pptx
