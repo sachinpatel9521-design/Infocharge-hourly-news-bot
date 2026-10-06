@@ -16,10 +16,10 @@ on:
           - evening
 
   schedule:
-    # 08:30 IST
+    # 08:30 IST - Pre-market
     - cron: "0 3 * * 1-5"
 
-    # 09:10 IST
+    # 09:10 IST - Before market open
     - cron: "40 3 * * 1-5"
 
     # 10:30 IST
@@ -31,10 +31,10 @@ on:
     # 14:30 IST
     - cron: "0 9 * * 1-5"
 
-    # 15:40 IST
+    # 15:40 IST - After market close
     - cron: "10 10 * * 1-5"
 
-    # 18:30 IST
+    # 18:30 IST - Evening / post-market
     - cron: "0 13 * * 1-5"
 
 
@@ -80,3 +80,32 @@ jobs:
               "0 13 * * 1-5")
                 echo "kind=evening" >> "$GITHUB_OUTPUT"
                 ;;
+              *)
+                echo "kind=hourly" >> "$GITHUB_OUTPUT"
+                ;;
+            esac
+          fi
+
+      - name: Run INFOCHARGE AI Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          INFOCHARGE_UPDATE_TYPE: ${{ steps.update_type.outputs.kind }}
+        run: |
+          python bot_gemini.py
+
+      - name: Save editorial memory
+        shell: bash
+        run: |
+          if git diff --quiet -- infocharge_memory.json; then
+            echo "No memory changes."
+            exit 0
+          fi
+
+          git config user.name "INFOCHARGE Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add infocharge_memory.json
+          git commit -m "Update INFOCHARGE editorial memory"
+          git push
