@@ -53,7 +53,7 @@ jobs:
         run: |
           python -m py_compile bot_gemini.py
 
-      - name: Decide update type
+            - name: Decide update type
         id: update_type
         shell: bash
         env:
@@ -61,8 +61,16 @@ jobs:
           INPUT_TYPE: ${{ inputs.update_type }}
           SCHEDULE: ${{ github.event.schedule }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             echo "kind=$INPUT_TYPE" >> "$GITHUB_OUTPUT"
+          elif [[ "$SCHEDULE" == "0 3 * * 1-5" ]]; then
+            echo "kind=premarket" >> "$GITHUB_OUTPUT"
+          elif [[ "$SCHEDULE" == "40 3 * * 1-5" ]]; then
+            echo "kind=open" >> "$GITHUB_OUTPUT"
+          elif [[ "$SCHEDULE" == "10 10 * * 1-5" ]]; then
+            echo "kind=close" >> "$GITHUB_OUTPUT"
+          elif [[ "$SCHEDULE" == "0 13 * * 1-5" ]]; then
+            echo "kind=evening" >> "$GITHUB_OUTPUT"
           else
-            case "$SCHEDULE" in
-              "0 3 * * 1-5") echo "kind=premarket" >>
+            echo "kind=hourly" >> "$GITHUB_OUTPUT"
+          fi
