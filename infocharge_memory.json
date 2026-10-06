@@ -16,5 +16,13 @@
   ],
   "editorial_notes": [
     "Supported across multiple tier-1 publications (Livemint, The Times of India, India Today) with concrete issue dates and size targets."
-  ]
+  ],
+  "education": [
+    {
+      "date": "2026-10-06",
+      "post": "🎓 **INFOCHARGE Market Lesson: Decoding the Nifty IT vs. Nasdaq Link**\n\nInvestors often watch the Nasdaq 100 overnight to guess how Nifty IT will open the next morning. While both belong to the broad \"tech\" basket, understanding *why* they correlate—and where they diverge—is essential for macro thinking.\n\n---\n\n### 🧠 The Conceptual Framework: Products vs. Services\n\n**1. Nasdaq 100 = Technology Creators (Product & Platforms)**\n* Dominated by mega-cap platforms, hardware, enterprise software, and consumer tech.\n* Characterized by high R&D spend, intellectual property ownership, and significant operating leverage.\n* High \"equity duration\": valuations are deeply sensitive to long-term interest rates because a huge portion of projected cash flows lies far in the future.\n\n**2. Nifty IT = Technology Enablers (Enterprise Services)**\n* Dominated by global IT services, consulting, system integration, and software maintenance.\n* Driven by corporate enterprise IT budgets across the US and Europe (BFSI, healthcare, retail, manufacturing).\n* Cash-flow profiles resemble high-margin consulting businesses rather than software platform monopolies.\n\n---\n\n### 🔄 Why They Diverge\n\n* **Discretionary Spending vs. Core Maintenance:** In tech downturns, US companies may cut vendor contracts and discretionary digital transformation projects first, hurting IT services billing rates and deal ramp-ups.\n* **Currency Transmission:** Nifty IT companies bill predominantly in USD while incurring costs in INR. A stronger US Dollar often provides a natural margin buffer for Indian IT, a factor absent in the domestic USD-earning base of many Nasdaq firms.\n* **Valuation Multiples:** When discount rates shift (via US Treasury yields), high-multiple, high-beta Nasdaq tech often re-rates faster than defensive, cash-rich Indian IT services exporters.\n\n---\n\n### 📊 Current Data Snapshot\n*(As of recorded feed)*\n* **Nifty IT Index:** 28,301.65\n* **Nasdaq 100 Index:** 31,076.44\n* **Nifty IT / Nasdaq 100 Ratio:** ~0.91\n\n*Note: Relative ratios illustrate historical tracking and sentiment divergence over time, but a ratio alone does not predict market direction or mean-reversion.*\n\n---\n\n### 💡 The Takeaway\nDo not treat Nifty IT as a mirror image of Nasdaq. When tracking Indian IT, monitor:\n1. **US Enterprise Capex / Discretionary Budgets** (demand volume).\n2. **USD/INR Trends** (realized billing margin).\n3. **Global Yield Dynamics** (valuation multiples across tech duration).\n\n*Educational post only. Not financial or investment advice.*"
+    }
+  ],
+  "ipo_watch": [],
+  "calendar_sent": []
 }
