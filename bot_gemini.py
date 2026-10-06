@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import html
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime
@@ -18,7 +19,8 @@ TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-MODEL = "gemini-3.8-flash"
+MODELS = ["gemini-3.8-flash", "gemini-3.7-flash"]
+RETRYABLE_STATUS_CODES = (408, 429, 500, 502, 503, 504)
 MEMORY_FILE = Path("infocharge_memory.json")
 MAX_ARTICLES = 55
 MAX_MEMORY_ITEMS = 80
@@ -171,16 +173,48 @@ def article_packet(articles):
     return "\n\n".join(blocks)
 
 
+def _is_retryable_gemini_error(exc):
+    message = str(exc).lower()
+    return any(str(code) in message for code in RETRYABLE_STATUS_CODES) or "unavailable" in message or "temporarily" in message
+
+
+def _generate_with_retry(model, prompt, max_tokens, attempts=4):
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            logging.info("Gemini request | model=%s | attempt=%d/%d", model, attempt, attempts)
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(max_output_tokens=max_tokens),
+            )
+            text = (response.text or "").strip()
+            if not text:
+                raise RuntimeError("Gemini returned an empty response.")
+            return text
+        except Exception as exc:
+            last_error = exc
+            if not _is_retryable_gemini_error(exc) or attempt == attempts:
+                raise
+            delay = 3 * (2 ** (attempt - 1))
+            logging.warning("Gemini %s temporary failure: %s | retrying in %ss", model, exc, delay)
+            time.sleep(delay)
+    raise last_error
+
+
 def call_gemini(prompt, max_tokens):
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(max_output_tokens=max_tokens),
-    )
-    text = (response.text or "").strip()
-    if not text:
-        raise RuntimeError("Gemini returned an empty response.")
-    return text
+    errors = []
+    for model in MODELS:
+        try:
+            return _generate_with_retry(model, prompt, max_tokens)
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+            logging.warning("Gemini model failed: %s", errors[-1])
+            if not _is_retryable_gemini_error(exc):
+                # Try the next model for model-specific/API availability errors too.
+                continue
+
+    raise RuntimeError("All Gemini models failed: " + " | ".join(errors))
 
 
 def extract_json(text):
@@ -363,4 +397,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+    
