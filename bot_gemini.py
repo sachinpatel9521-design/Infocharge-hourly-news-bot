@@ -1,18 +1,16 @@
 import os
 import json
 import logging
-from datetime import datetime
+import re
+import html
 from pathlib import Path
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import feedparser
 import requests
 from google import genai
 from google.genai import types
-
-
-# ============================================================
-# INFOCHARGE AI MARKET INTELLIGENCE BOT
-# ============================================================
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -20,25 +18,73 @@ TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-# Gemini 2.5 is being used for Google Search grounding.
-MODEL = "gemini-2.5-flash"
-
+MODEL = "gemini-3.8-flash"
 MEMORY_FILE = Path("infocharge_memory.json")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
+MAX_ARTICLES = 55
+MAX_MEMORY_ITEMS = 80
+HTTP_TIMEOUT = 15
 
+# ---------------------------------------------------------
+# NEWS DISCOVERY
+# ---------------------------------------------------------
 
-# ============================================================
+NEWS_FEEDS = [
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=Indian+stock+market+NSE+Nifty+Sensex&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=NSE+listed+company+order+results+announcement+India&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=India+SEBI+RBI+markets+stocks&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=India+IPO+stock+exchange+listing&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=India+data+centre+stocks+order+investment&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=India+semiconductor+stocks+investment+order&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=India+defence+stocks+order+contract&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=India+renewable+energy+stocks+order+capex&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=India+manufacturing+stocks+capex+order&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=India+banking+stocks+results+NPA+credit&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=India+pharma+stocks+USFDA+order+approval&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+    (
+        "Google News",
+        "https://news.google.com/rss/search?q=India+IT+stocks+deal+contract+order&hl=en-IN&gl=IN&ceid=IN:en",
+    ),
+]
+
+# ---------------------------------------------------------
 # NSE HOLIDAYS 2026
-# ============================================================
+# ---------------------------------------------------------
 
 NSE_HOLIDAYS_2026 = {
-    "2026-01-15",
     "2026-01-26",
     "2026-03-03",
     "2026-03-26",
@@ -54,522 +100,474 @@ NSE_HOLIDAYS_2026 = {
     "2026-11-10",
     "2026-11-24",
     "2026-12-25",
+    "2026-11-08",
 }
 
+# ---------------------------------------------------------
+# LOGGING
+# ---------------------------------------------------------
 
-# ============================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+
+# ---------------------------------------------------------
+# GEMINI CLIENT
+# ---------------------------------------------------------
+
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+# ---------------------------------------------------------
+# TEXT HELPERS
+# ---------------------------------------------------------
+
+def clean_text(value):
+    value = html.unescape(value or "")
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
+
+
+def normalize_title(title):
+    title = clean_text(title).lower()
+    title = re.sub(r"[^a-z0-9]+", " ", title)
+    return re.sub(r"\s+", " ", title).strip()
+
+
+# ---------------------------------------------------------
 # MEMORY
-# ============================================================
+# ---------------------------------------------------------
 
 def load_memory():
     if not MEMORY_FILE.exists():
         return {
-            "covered_stories": [],
-            "covered_companies": [],
-            "themes": [],
-            "last_posts": []
+            "posted": [],
+            "editorial_notes": [],
         }
 
     try:
-        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = json.loads(
+            MEMORY_FILE.read_text(encoding="utf-8")
+        )
 
         if not isinstance(data, dict):
-            raise ValueError("Invalid memory format")
+            return {
+                "posted": [],
+                "editorial_notes": [],
+            }
 
-        data.setdefault("covered_stories", [])
-        data.setdefault("covered_companies", [])
-        data.setdefault("themes", [])
-        data.setdefault("last_posts", [])
+        data.setdefault("posted", [])
+        data.setdefault("editorial_notes", [])
 
         return data
 
-    except Exception as e:
-        logging.warning(f"Memory load failed: {e}")
+    except Exception:
+        logging.warning(
+            "Memory file could not be read. Starting with empty memory."
+        )
 
         return {
-            "covered_stories": [],
-            "covered_companies": [],
-            "themes": [],
-            "last_posts": []
+            "posted": [],
+            "editorial_notes": [],
         }
 
 
 def save_memory(memory):
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(memory, f, indent=2, ensure_ascii=False)
+    MEMORY_FILE.write_text(
+        json.dumps(
+            memory,
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
-# ============================================================
+def memory_for_prompt(memory):
+
+    posted = memory.get("posted", [])[-MAX_MEMORY_ITEMS:]
+    notes = memory.get("editorial_notes", [])[-20:]
+
+    compact = {
+        "posted": [
+            {
+                "date": item.get("date"),
+                "headline": item.get("headline"),
+                "company": item.get("company"),
+                "key": item.get("key"),
+            }
+            for item in posted
+        ],
+        "editorial_notes": notes,
+    }
+
+    return json.dumps(
+        compact,
+        ensure_ascii=False,
+    )
+
+
+# ---------------------------------------------------------
 # MARKET STATUS
-# ============================================================
+# ---------------------------------------------------------
 
-def is_nse_holiday(dt):
-    date_str = dt.strftime("%Y-%m-%d")
+def market_status(now):
 
-    if dt.weekday() >= 5:
-        return True
+    date_key = now.strftime("%Y-%m-%d")
 
-    return date_str in NSE_HOLIDAYS_2026
-
-
-def market_session(dt):
-    if is_nse_holiday(dt):
+    if (
+        now.weekday() >= 5
+        or date_key in NSE_HOLIDAYS_2026
+    ):
         return "closed"
 
-    current_time = dt.time()
+    current_minutes = (
+        now.hour * 60
+        + now.minute
+    )
 
-    if current_time < datetime.strptime("09:15", "%H:%M").time():
+    if current_minutes < 9 * 60 + 15:
         return "pre_market"
 
-    if current_time <= datetime.strptime("15:30", "%H:%M").time():
+    if current_minutes <= 15 * 60 + 30:
         return "market_hours"
 
     return "post_market"
 
 
-# ============================================================
-# GEMINI GOOGLE SEARCH RESEARCH
-# ============================================================
+# ---------------------------------------------------------
+# FETCH NEWS
+# ---------------------------------------------------------
 
-def research_market(update_type, memory):
+def fetch_news():
 
-    now = datetime.now(IST)
+    collected = []
+    seen = set()
 
-    previous_stories = memory.get("covered_stories", [])[-15:]
-    previous_companies = memory.get("covered_companies", [])[-20:]
-    previous_themes = memory.get("themes", [])[-15:]
+    for feed_name, feed_url in NEWS_FEEDS:
 
-    memory_context = f"""
-Previously covered stories:
-{json.dumps(previous_stories, ensure_ascii=False)}
+        try:
 
-Previously covered companies:
-{json.dumps(previous_companies, ensure_ascii=False)}
+            feed = feedparser.parse(feed_url)
 
-Previously covered themes:
-{json.dumps(previous_themes, ensure_ascii=False)}
-"""
+            for entry in feed.entries[:12]:
 
-    prompt = f"""
-You are the senior research editor for INFOCHARGE, an Indian
-stock-market education community.
+                title = clean_text(
+                    entry.get("title", "")
+                )
 
-CURRENT DATE/TIME:
-{now.strftime("%d %B %Y, %I:%M %p IST")}
+                summary = clean_text(
+                    entry.get("summary")
+                    or entry.get("description")
+                    or ""
+                )
 
-UPDATE TYPE:
-{update_type}
+                link = entry.get(
+                    "link",
+                    "",
+                )
 
-MARKET SESSION:
-{market_session(now)}
+                published = clean_text(
+                    entry.get("published")
+                    or entry.get("updated")
+                    or ""
+                )
 
-Your job is NOT to summarize an RSS feed.
+                source = ""
 
-You must independently research the CURRENT web and identify
-the most important Indian stock-market development worth posting
-to an intelligent investor audience.
+                source_obj = entry.get("source")
 
-Use Google Search extensively when needed.
-
-PRIORITY:
-
-1. NSE/BSE listed Indian companies
-2. Important company announcements
-3. Major orders/contracts
-4. Results and earnings surprises
-5. IPOs and corporate actions
-6. SEBI/RBI/government policy
-7. FII/DII flows when genuinely important
-8. Sector developments
-9. Commodities/currency/global events ONLY when they have
-   meaningful relevance to Indian markets
-10. Important data-centre, semiconductor, defence, energy,
-    manufacturing, banking, pharma, infrastructure and other
-    structural themes
-
-DO NOT simply choose the most recent headline.
-
-Look for:
-- significance
-- new information
-- measurable numbers
-- business impact
-- sector implications
-- why investors should understand it
-- what could happen next
-
-VERY IMPORTANT:
-
-Do not repeat a story already covered unless there is a
-material NEW development.
-
-Do not manufacture a story merely to create a post.
-
-If there is no genuinely important development, return NO_POST.
-
-A weak or generic news item is worse than posting nothing.
-
-{memory_context}
-
-EDITORIAL STANDARD:
-
-The final post should feel like a human market researcher
-found something interesting and explained WHY IT MATTERS.
-
-Avoid:
-- generic "market update" posts
-- headline dumping
-- URL dumping
-- copied article language
-- unnecessary market predictions
-- fake certainty
-- buy/sell calls
-- entry/exit instructions
-- profit promises
-- sensationalism
-
-You may use interpretation, but clearly separate facts
-from interpretation.
-
-For company stories, investigate:
-- exact company
-- exact announcement
-- exact amount/value
-- customer/order if available
-- business segment
-- why the development matters
-- broader sector/theme
-- important caveat
-
-For market-wide stories, investigate:
-- actual trigger
-- affected sectors
-- important numbers
-- Indian-market transmission mechanism
-- what to watch next
-
-SEARCH QUALITY:
-
-Prefer primary/credible sources such as:
-- company filings
-- NSE/BSE disclosures
-- SEBI
-- RBI
-- government releases
-- company investor relations
-- credible financial publications
-
-Cross-check important numbers whenever possible.
-
-Return ONLY valid JSON.
-
-Required JSON:
-
-{{
-  "decision": "POST" or "NO_POST",
-  "importance": 1,
-  "headline": "",
-  "company": "",
-  "sector": "",
-  "what_happened": "",
-  "key_numbers": [],
-  "why_it_matters": "",
-  "bigger_theme": "",
-  "what_to_watch": "",
-  "risk_or_caveat": "",
-  "sources": [],
-  "post_angle": ""
-}}
-
-Rules for decision:
-
-POST only when importance >= 7.
-
-If nothing is genuinely useful:
-{{
-  "decision": "NO_POST"
-}}
-
-Do not include markdown outside the JSON.
-"""
-
-    try:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=2200,
-                tools=[
-                    types.Tool(
-                        google_search=types.GoogleSearch()
+                if isinstance(source_obj, dict):
+                    source = clean_text(
+                        source_obj.get(
+                            "title",
+                            "",
+                        )
                     )
-                ],
-            ),
+
+                if not title:
+                    continue
+
+                key = normalize_title(title)
+
+                if not key or key in seen:
+                    continue
+
+                seen.add(key)
+
+                collected.append(
+                    {
+                        "title": title,
+                        "summary": summary[:900],
+                        "source": source or feed_name,
+                        "published": published,
+                        "link": link,
+                    }
+                )
+
+        except Exception as exc:
+
+            logging.warning(
+                "News feed failed: %s | %s",
+                feed_url,
+                exc,
+            )
+
+    return collected[:MAX_ARTICLES]
+
+
+# ---------------------------------------------------------
+# ARTICLE PACKET
+# ---------------------------------------------------------
+
+def article_packet(articles):
+
+    lines = []
+
+    for i, item in enumerate(
+        articles,
+        1,
+    ):
+
+        lines.append(
+            f"""
+ARTICLE {i}
+Source: {item["source"]}
+Published: {item["published"]}
+Title: {item["title"]}
+Summary: {item["summary"]}
+Link: {item["link"]}
+"""
         )
 
-        text = (response.text or "").strip()
-
-        if not text:
-            raise RuntimeError("Gemini returned empty research")
-
-        # Remove accidental markdown JSON fences
-        if text.startswith("```"):
-            text = text.replace("```json", "")
-            text = text.replace("```", "")
-            text = text.strip()
-
-        result = json.loads(text)
-
-        if not isinstance(result, dict):
-            raise ValueError("Research result is not an object")
-
-        return result
-
-    except Exception as e:
-        logging.error(f"Research failed: {e}")
-        raise
+    return "\n".join(lines)
 
 
-# ============================================================
-# HUMAN-STYLE TELEGRAM WRITER
-# ============================================================
+# ---------------------------------------------------------
+# GEMINI CALL
+# ---------------------------------------------------------
 
-def write_post(research):
-
-    prompt = f"""
-You are the final editor for INFOCHARGE.
-
-Convert the following researched information into a
-high-quality Telegram post for Indian market participants.
-
-RESEARCH:
-{json.dumps(research, ensure_ascii=False, indent=2)}
-
-STYLE:
-
-Write like a sharp human financial researcher.
-
-Do NOT write like:
-- an RSS reader
-- a newspaper headline copier
-- a generic AI chatbot
-- a broker recommendation
-
-The reader should immediately understand:
-
-WHAT HAPPENED
-WHY IT MATTERS
-WHAT BIGGER THEME IT CONNECTS TO
-
-Use short paragraphs and bullets.
-
-Suggested structure, but do NOT follow it mechanically:
-
-⚡ HEADLINE
-
-One-line explanation.
-
-💰 KEY DEVELOPMENT
-• Important number/fact
-• Important number/fact
-
-🔥 WHY THIS MATTERS
-
-Explain the business/sector significance.
-
-📌 BIGGER SIGNAL
-
-Connect it to the broader structural theme if justified.
-
-👀 WHAT TO WATCH
-
-Mention the next relevant development.
-
-IMPORTANT:
-
-- No buy calls
-- No sell calls
-- No entry price
-- No target price
-- No guaranteed returns
-- No "this stock will rise"
-- No fake certainty
-- No raw URLs
-- Do not mention "according to AI"
-- Do not mention this prompt
-- Do not mention Google Search
-- Do not invent anything
-
-Use only facts contained in the research.
-
-Keep it around 700-1200 characters.
-
-End with:
-
-"⚠️ INFOCHARGE is for education and market understanding,
-not investment advice."
-
-Return only the Telegram post text.
-"""
+def call_gemini(
+    prompt,
+    max_tokens,
+):
 
     response = client.models.generate_content(
         model=MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
-            temperature=0.45,
-            max_output_tokens=1400,
+            max_output_tokens=max_tokens,
         ),
     )
 
-    text = (response.text or "").strip()
+    text = (
+        response.text
+        or ""
+    ).strip()
 
     if not text:
-        raise RuntimeError("Gemini returned empty post")
+        raise RuntimeError(
+            "Gemini returned an empty response."
+        )
 
     return text
 
 
-# ============================================================
-# TELEGRAM
-# ============================================================
+# ---------------------------------------------------------
+# JSON EXTRACTION
+# ---------------------------------------------------------
 
-def send_telegram(message):
+def extract_json(text):
 
-    url = (
-        f"https://api.telegram.org/"
-        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    text = text.strip()
+
+    text = re.sub(
+        r"^```(?:json)?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
     )
 
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "disable_web_page_preview": True,
-    }
-
-    response = requests.post(
-        url,
-        json=payload,
-        timeout=30
+    text = re.sub(
+        r"\s*```$",
+        "",
+        text,
     )
 
-    response.raise_for_status()
+    try:
+        return json.loads(text)
 
-    logging.info("Telegram message sent successfully.")
+    except json.JSONDecodeError:
 
-
-# ============================================================
-# MEMORY UPDATE
-# ============================================================
-
-def update_memory(memory, research, post):
-
-    headline = research.get("headline", "").strip()
-    company = research.get("company", "").strip()
-    theme = research.get("bigger_theme", "").strip()
-
-    if headline:
-        memory["covered_stories"].append(headline)
-
-    if company:
-        memory["covered_companies"].append(company)
-
-    if theme:
-        memory["themes"].append(theme)
-
-    memory["last_posts"].append({
-        "date": datetime.now(IST).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        ),
-        "headline": headline,
-        "company": company,
-        "importance": research.get("importance", 0),
-        "post": post,
-    })
-
-    # Keep memory compact
-    memory["covered_stories"] = memory["covered_stories"][-50:]
-    memory["covered_companies"] = memory["covered_companies"][-50:]
-    memory["themes"] = memory["themes"][-50:]
-    memory["last_posts"] = memory["last_posts"][-30:]
-
-
-# ============================================================
-# MAIN
-# ============================================================
-
-def main():
-
-    now = datetime.now(IST)
-
-    update_type = os.getenv(
-        "INFOCHARGE_UPDATE_TYPE",
-        "hourly"
-    )
-
-    logging.info(
-        f"INFOCHARGE run | "
-        f"{now.strftime('%d-%m-%Y %I:%M %p IST')} | "
-        f"type={update_type} | "
-        f"session={market_session(now)}"
-    )
-
-    # Don't publish normal market posts on weekends/holidays.
-    if is_nse_holiday(now):
-        logging.info(
-            "NSE closed today. No normal market post."
+        match = re.search(
+            r"\{.*\}",
+            text,
+            flags=re.DOTALL,
         )
-        return
 
-    memory = load_memory()
+        if not match:
+            raise RuntimeError(
+                "Gemini did not return valid JSON."
+            )
 
-    research = research_market(
-        update_type,
-        memory
-    )
-
-    logging.info(
-        f"Research decision: "
-        f"{research.get('decision')}"
-    )
-
-    if research.get("decision") != "POST":
-        logging.info(
-            "No sufficiently important story. "
-            "Nothing posted."
+        return json.loads(
+            match.group(0)
         )
-        return
 
-    importance = int(
-        research.get("importance", 0)
+
+# ---------------------------------------------------------
+# AI RESEARCH + EDITORIAL DECISION
+# ---------------------------------------------------------
+
+def research_story(
+    articles,
+    memory,
+    update_type,
+    now,
+):
+
+    prompt = f"""
+You are the senior news editor for
+INFOCHARGE INSIDERS CLUB, an Indian
+stock-market intelligence channel.
+
+CURRENT TIME (IST):
+{now.strftime("%d %b %Y, %I:%M %p")}
+
+UPDATE TYPE:
+{update_type}
+
+MARKET STATUS:
+{market_status(now)}
+
+Your job is NOT to post every news item.
+
+Use the supplied current-news reports
+as discovery material.
+
+Select at most ONE story worth publishing.
+
+The final decision must be based on:
+
+- market importance
+- specificity
+- credibility
+- business impact
+- usefulness to serious Indian investors
+
+PRIORITY:
+
+1. Major listed-company orders/contracts
+   with meaningful value or strategic customers.
+
+2. Material earnings, guidance,
+   capacity expansion, capex,
+   acquisition, demerger,
+   fundraising or major business wins.
+
+3. Major SEBI/RBI/government regulatory
+   developments that can materially affect
+   markets or sectors.
+
+4. IPO/listing/deal developments with
+   genuine significance.
+
+5. Important sector developments:
+   defence, power, data centres,
+   semiconductors, renewables,
+   manufacturing, pharma,
+   banking, IT etc.
+
+6. Broad Nifty/Sensex moves only when
+   there is a genuinely important catalyst.
+
+REJECT:
+
+- routine index movement
+- small/unimportant contracts
+- vague commentary
+- clickbait
+- rumours presented as facts
+- generic market updates
+- duplicate stories
+- stories already posted
+- stories where evidence is too weak
+
+IMPORTANT:
+
+- Do NOT invent numbers.
+- Do NOT invent customers.
+- Do NOT invent dates.
+- Do NOT invent percentages.
+- Do NOT invent company facts.
+- If reports conflict, mention the uncertainty.
+- Prefer stories supported by multiple reports.
+- One excellent story is better than five weak stories.
+- No buy/sell recommendation.
+- No target price.
+- No guaranteed-return language.
+- NO_POST is completely acceptable.
+
+Return ONLY valid JSON.
+
+Use exactly these keys:
+
+{{
+  "decision": "POST" or "NO_POST",
+  "importance": 0-10,
+  "headline": "...",
+  "company": "...",
+  "sector": "...",
+  "key_facts": [
+    "...",
+    "..."
+  ],
+  "why_it_matters": "...",
+  "bigger_theme": "...",
+  "caveat": "...",
+  "memory_key": "...",
+  "editorial_note": "..."
+}}
+
+EDITORIAL MEMORY:
+
+{memory_for_prompt(memory)}
+
+CURRENT NEWS REPORTS:
+
+{article_packet(articles)}
+"""
+
+    result = call_gemini(
+        prompt,
+        2600,
     )
 
-    if importance < 7:
-        logging.info(
-            f"Importance {importance}/10 is below threshold."
-        )
-        return
-
-    post = write_post(research)
-
-    if len(post) > 3900:
-        post = post[:3850].rstrip() + "\n\n⚠️"
-
-    send_telegram(post)
-
-    update_memory(
-        memory,
-        research,
-        post
-    )
-
-    save_memory(memory)
-
-    logging.info(
-        "INFOCHARGE post completed successfully."
-    )
+    return extract_json(result)
 
 
-if __name__ == "__main__":
-    main()
+# ---------------------------------------------------------
+# FINAL TELEGRAM POST
+# ---------------------------------------------------------
+
+def write_post(
+    research,
+    update_type,
+    now,
+):
+
+    prompt = f"""
+You are the final editor for
+INFOCHARGE INSIDERS CLUB.
+
+Write ONE premium Telegram post from
+the research below.
+
+STYLE:
+
+- Human
+- Sharp
+- Concise
+- Intelligent
