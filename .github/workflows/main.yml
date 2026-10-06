@@ -54,15 +54,26 @@ jobs:
         run: |
           python -m py_compile bot_gemini.py
 
-      - name: Decide update type
-        id: update_type
-        shell: bash
+      - name: Run INFOCHARGE AI Bot
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_TYPE: ${{ inputs.update_type }}
-          SCHEDULE: ${{ github.event.schedule }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          INFOCHARGE_UPDATE_TYPE: "${{ github.event_name == 'workflow_dispatch' && inputs.update_type || github.event.schedule == '0 3 * * 1-5' && 'premarket' || github.event.schedule == '40 3 * * 1-5' && 'open' || github.event.schedule == '10 10 * * 1-5' && 'close' || github.event.schedule == '0 13 * * 1-5' && 'evening' || 'hourly' }}"
         run: |
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "kind=$INPUT_TYPE" >> "$GITHUB_OUTPUT"
-          elif [[ "$SCHEDULE" == "0 3 * * 1-5" ]]; then
-            echo "kind=premark
+          python bot_gemini.py
+
+      - name: Save editorial memory
+        shell: bash
+        run: |
+          if git diff --quiet -- infocharge_memory.json; then
+            echo "No memory changes."
+            exit 0
+          fi
+
+          git config user.name "INFOCHARGE Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add infocharge_memory.json
+          git commit -m "Update INFOCHARGE editorial memory"
+          git push
